@@ -654,7 +654,7 @@
     const team = app.teams[b];
     if (!team) warns.push('未登録のビブです');
     const win = (app.comp && app.comp.merge_window_ms) || 10000;
-    if (app.passes.some((x) => x !== p && x.bib === b && !x.deleted && Math.abs(x.time_ms - p.time_ms) <= win)) warns.push('直前に同じビブを記録済み（重複?）');
+    if (app.passes.some((x) => x !== p && x.bib === b && !x.deleted && Math.abs(x.time_ms - p.time_ms) <= win)) warns.push('直前にも同じビブを記録（二重入力なら「取消」）');
     const leg = legOf(p);
     if (team && leg > Math.max(team.runners.length, 1)) warns.push('全走者分の記録があります');
     if (!(app.comp && app.comp.start_ms) && !app.pendingStart) warns.push('スタート未記録');

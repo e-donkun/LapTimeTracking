@@ -165,6 +165,9 @@ textarea { width: 100%; resize: vertical; }
 .results .leg.manual .split::after { content: " ✎"; color: var(--primary); font-size: 12px; }
 .results .total { font-family: var(--mono); font-size: 17px; font-weight: 700; text-align: right; border-left: 1px solid var(--line); }
 .results tr.open .rank { color: var(--open); font-size: 13px; }
+.results .leg.single { box-shadow: inset 3px 0 0 #6b9be0; }
+.single-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6b9be0; margin-right: 4px; vertical-align: middle; }
+.chip.info { background: #eef4fd; border-color: #c9dbf5; color: var(--primary); }
 .flag-dot, .results .leg.flagged .split::before {
   content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f0a400; margin-right: 6px; vertical-align: middle;
 }

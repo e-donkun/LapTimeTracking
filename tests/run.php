@@ -97,8 +97,8 @@ check('race not finished before any pass', Results::race($cid)['finished'] === f
 pass($cid, $devA, 1, $m(600.0));  pass($cid, $devB, 1, $m(600.4));
 pass($cid, $devA, 1, $m(1250.0)); pass($cid, $devB, 1, $m(1250.2));
 pass($cid, $devA, 1, $m(1900.0)); pass($cid, $devB, 1, $m(1903.0)); // 3秒差 → 警告
-// チームB: 端末Bが 2走 を記録漏れ、端末A は 1走 を二重入力
-pass($cid, $devA, 2, $m(580.0));  pass($cid, $devA, 2, $m(581.0)); pass($cid, $devB, 2, $m(580.2));
+// チームB: 端末Bが 2走 を記録漏れ（1台のみの記録も有効）
+pass($cid, $devA, 2, $m(580.0));  pass($cid, $devB, 2, $m(580.2));
 pass($cid, $devA, 2, $m(1200.0));
 pass($cid, $devA, 2, $m(1800.0)); pass($cid, $devB, 2, $m(1800.0));
 // チームC（2名 → オープン）
@@ -123,9 +123,10 @@ check('A leg1 median', $A['legs'][0]['elapsed_ms'] === 600200, (string) $A['legs
 check('A leg2 split', $A['legs'][1]['split_ms'] === 1250100 - 600200, (string) $A['legs'][1]['split_ms']);
 check('A leg3 spread flag', in_array('spread', $A['legs'][2]['crossing']['flags'], true));
 check('A total', $A['total_ms'] === 1901500, (string) $A['total_ms']);
-check('B duplicate flag', in_array('duplicate', $B['legs'][0]['crossing']['flags'], true));
-check('B leg1 earliest per device', $B['legs'][0]['elapsed_ms'] === 580100, (string) $B['legs'][0]['elapsed_ms']);
-check('B missing flag', in_array('missing', $B['legs'][1]['crossing']['flags'], true));
+check('B leg1 median of 2 devices', $B['legs'][0]['elapsed_ms'] === 580100, (string) $B['legs'][0]['elapsed_ms']);
+check('B leg2 single device is valid', $B['legs'][1]['elapsed_ms'] === 1200000 && in_array('missing', $B['legs'][1]['crossing']['flags'], true));
+check('single-device is info, not warning', $B['flag_count'] === 0 && $B['single_count'] === 1, "flag={$B['flag_count']} single={$B['single_count']}");
+check('B finished with single-device leg', $B['state'] === 'finished' && $B['total_ms'] === 1800000);
 check('B rank 1', $B['rank'] === 1 && $A['rank'] === 2, "B={$B['rank']} A={$A['rank']}");
 check('C open, no rank', $C['is_open'] === true && $C['rank'] === null && $C['state'] === 'finished');
 check('C total measured', $C['total_ms'] === 1000000);
@@ -171,6 +172,25 @@ foreach ($res['teams'] as $t) {
         check('earliest method', $t['legs'][0]['elapsed_ms'] === 600000);
     }
 }
+
+echo "Repeated entries\n";
+// 同じ端末で同じビブを続けて入力 → それぞれ次の走者の通過として数える（短い間隔は要確認）
+$c2 = Repo::saveCompetition(['name' => '連続入力テスト', 'tolerance_ms' => 1000]);
+Repo::saveTeam($c2, ['bib' => '1', 'name' => 'T', 'runners' => [['name' => 'a'], ['name' => 'b'], ['name' => 'c']]]);
+Db::exec('UPDATE competitions SET start_ms = ? WHERE id = ?', [$start, $c2]);
+pass($c2, $devA, 1, $m(10.0)); pass($c2, $devA, 1, $m(12.0)); pass($c2, $devA, 1, $m(14.0));
+$t = Results::compute($c2)['teams'][0];
+check('1 device x3 entries = 3 legs', $t['legs_done'] === 3 && $t['state'] === 'finished' && $t['total_ms'] === 14000, json_encode([$t['legs_done'], $t['total_ms']]));
+check('short interval flagged', in_array('short', $t['legs'][1]['crossing']['flags'], true) && !in_array('short', $t['legs'][0]['crossing']['flags'], true));
+// 2 台目が同じ順で記録 → 各通過に揃い、中央値で精度を上げる
+pass($c2, $devB, 1, $m(10.4)); pass($c2, $devB, 1, $m(12.2)); pass($c2, $devB, 1, $m(14.2));
+$t = Results::compute($c2)['teams'][0];
+check('2 devices aligned per crossing', $t['legs_done'] === 3 && count($t['legs'][1]['crossing']['devices']) === 2 && $t['legs'][1]['elapsed_ms'] === 12100, json_encode($t['legs'][1]['elapsed_ms']));
+check('no extra crossings', count($t['extra']) === 0 && $t['single_count'] === 0);
+// 2 台目が 1 回だけ多く入力（二重入力）→ 1 台のみの通過として超過に入る
+pass($c2, $devB, 1, $m(14.5));
+$t = Results::compute($c2)['teams'][0];
+check('extra entry from one device', $t['total_ms'] === 14100 && count($t['extra']) === 1, json_encode([$t['total_ms'], count($t['extra'])]));
 
 echo "Export\n";
 $path = Export::xlsx($cid);

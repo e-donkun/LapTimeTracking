@@ -53,7 +53,9 @@ View::header($comp['name'], $user);
     <div id="res-extra"></div>
     <p class="small muted legend">
       各区間: <b>ラップ</b>（区間順位）/ 通過時点の累計。
-      <span class="flag-dot"></span> は端末間の差・記録漏れなど確認が必要な通過です。セルをクリックすると端末ごとの記録を確認できます。
+      <span class="flag-dot"></span> 要確認（端末間の差が大きい・直前の通過と間隔が短い）。
+      <span class="single-dot"></span> 1台のみの記録（有効）。
+      同じ端末で同じビブを入力するたびに次の走者の通過として数えます。セルをクリックすると端末ごとの記録を確認できます。
     </p>
   </section>
 

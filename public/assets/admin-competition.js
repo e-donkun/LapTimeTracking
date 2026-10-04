@@ -115,8 +115,14 @@
     return n;
   }
 
+  /** 要確認（黄色）: 端末間の差・二重入力の可能性など */
   function isFlagged(c) {
-    return c && c.flags.some((f) => f !== 'manual');
+    const warn = (st.results && st.results.warn_flags) || ['spread', 'short'];
+    return !!c && c.flags.some((f) => warn.includes(f));
+  }
+  /** 参考（青）: 1 台のみの記録。記録は有効 */
+  function isSingle(c) {
+    return !!c && c.flags.includes('missing');
   }
 
   function renderResults() {
@@ -128,6 +134,7 @@
       '<span class="chip">チーム <b>' + s.teams + '</b></span>' +
       '<span class="chip">完走 <b>' + s.finished + '</b></span>' +
       '<span class="chip' + (s.flagged ? ' warn' : '') + '">要確認 <b>' + s.flagged + '</b></span>' +
+      (s.single ? '<span class="chip info" title="1台の端末だけが記録した通過（記録は有効）">1台のみの記録 <b>' + s.single + '</b></span>' : '') +
       (s.unknown ? '<span class="chip warn">未登録ビブ <b>' + s.unknown + '</b></span>' : '') +
       '<span class="chip">計測端末 <b>' + active + '</b> / ' + r.devices.length + '</span>';
 
@@ -162,6 +169,7 @@
         const cls = ['leg'];
         if (!c) cls.push(i === t.legs_done && t.state === 'running' ? 'running' : 'pending');
         if (isFlagged(c)) cls.push('flagged');
+        else if (isSingle(c)) cls.push('single');
         if (c && c.method === 'admin') cls.push('manual');
         html += '<td class="' + cls.join(' ') + '" data-bib="' + t.bib + '" data-leg="' + i + '" title="クリックで端末ごとの記録を表示">' +
           '<div class="runner">' + (leg.runner ? esc(leg.runner.name) : '<span class="muted">（未登録）</span>') + '</div>';
@@ -261,7 +269,8 @@
         (o.elapsed != null && !o.extra ? '　累計 ' + dur(o.elapsed) : '') +
         '　端末間の差 ' + (c.spread_ms / 1000).toFixed(1) + ' 秒</p>';
       if (c.flags.length) {
-        html += '<p>' + c.flags.map((f) => '<span class="badge ' + (f === 'manual' ? 'badge-run' : 'badge-warn') + '">' + esc(st.results.flag_labels[f] || f) + '</span>').join(' ') + '</p>';
+        html += '<p>' + c.flags.map((f) => '<span class="badge ' + (st.results.warn_flags.includes(f) ? 'badge-warn' : 'badge-run') + '">' + esc(st.results.flag_labels[f] || f) + '</span>').join(' ') +
+          (isSingle(c) && !isFlagged(c) ? ' <span class="small muted">（記録は有効です。複数台で記録すると精度が上がります）</span>' : '') + '</p>';
       }
       html += '<table class="table compare-table"><thead><tr><th>端末</th><th>記録時刻</th><th>採用との差</th><th></th></tr></thead><tbody>';
       c.pass_ids.map((id) => byId[id]).filter(Boolean).sort((a, b2) => a.time_ms - b2.time_ms).forEach((p) => {

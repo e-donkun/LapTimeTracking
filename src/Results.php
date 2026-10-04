@@ -5,10 +5,10 @@ declare(strict_types=1);
  * 集計ロジック
  *
  * 1. 有効な通過記録（端末で削除されておらず、管理者が除外していないもの）をビブごとに時刻順に並べる。
- * 2. 同じビブで merge_window_ms 以内の記録を 1 回の「通過 (crossing)」にまとめる。
- *    複数端末が同じ走者を記録していれば、ここで 1 つにまとまる。
+ * 2. 同じ端末の記録は 1 件ずつ別の「通過 (crossing)」とし（同じビブを入力するたびに次の走者）、
+ *    別の端末の記録は merge_window_ms 以内なら同じ通過に突き合わせる。1 台だけの記録でも有効。
  * 3. 通過時刻は 管理者入力 > 採用方法（中央値 / 最速）の順で決める。
- *    端末間の差が tolerance_ms を超える・記録していない端末がある・同じ端末で二重入力 などは警告フラグにする。
+ *    端末間の差が tolerance_ms を超える・直前の通過と間隔が短い は要確認、1 台のみの記録は参考として表示する。
  * 4. n 回目の通過 = n 走のゴール。ラップ = 前の通過（1走はスタート）からの差。
  *    登録人数分の通過が揃えば完走、最終通過 - スタート = チーム記録。
  * 5. 登録人数が team_size 未満（またはオープン指定）のチームはオープン参加として順位を付けない。
@@ -16,14 +16,17 @@ declare(strict_types=1);
 final class Results
 {
     public const FLAG_LABELS = [
-        'spread'    => '端末間の差',
-        'missing'   => '未記録の端末あり',
-        'duplicate' => '同一端末で重複',
-        'manual'    => '管理者入力',
-        'extra'     => '走者数を超える通過',
-        'unknown'   => '未登録ビブ',
-        'prestart'  => 'スタート前の記録',
+        'spread'   => '端末間の差',
+        'short'    => '直前の通過と間隔が短い（二重入力?）',
+        'missing'  => '1台のみの記録',
+        'manual'   => '管理者入力',
+        'extra'    => '走者数を超える通過',
+        'unknown'  => '未登録ビブ',
+        'prestart' => 'スタート前の記録',
     ];
+
+    /** 「要確認」として数えるフラグ（それ以外は参考表示。いずれも記録は有効） */
+    public const WARN_FLAGS = ['spread', 'short', 'extra', 'unknown', 'prestart'];
 
     /** @return array<string, mixed> */
     public static function compute(int $competitionId): array
@@ -90,8 +93,10 @@ final class Results
         usort($out, [self::class, 'displayOrder']);
 
         $flagged = 0;
+        $single = 0;
         $finished = 0;
         foreach ($out as $t) {
+            $single += $t['single_count'];
             if ($t['flag_count'] > 0) {
                 $flagged++;
             }
@@ -129,10 +134,12 @@ final class Results
                 'teams'    => count($out),
                 'finished' => $finished,
                 'flagged'  => $flagged,
+                'single'   => $single,
                 'unknown'  => count($unknown),
             ],
             'race'           => self::raceState($out, $start),
             'flag_labels'    => self::FLAG_LABELS,
+            'warn_flags'     => self::WARN_FLAGS,
         ];
     }
 
@@ -164,7 +171,14 @@ final class Results
     }
 
     /**
-     * 同一ビブの記録を時間窓でまとめる
+     * 同一ビブの記録を「通過」にまとめる
+     *
+     * - 同じ端末の記録は同じ通過にまとめない（その端末で n 回目に入力した記録 = n 回目の通過）。
+     *   短い間隔で続けて入力しても、それぞれ次の走者の通過として数える。
+     * - 別の端末の記録は、merge_window_ms 以内で、まだその端末の記録を含まない最も早い通過に加える
+     *   （複数台で同じ走者を記録していれば 1 つの通過に揃う）。
+     * - 1 台だけの記録でも有効。複数台あれば中央値（または最速）で精度を上げる。
+     *
      * @param array<int, array<string, mixed>> $list 時刻昇順
      * @param array<string, mixed> $comp
      * @param array<int, string> $activeDevices
@@ -172,40 +186,37 @@ final class Results
      */
     private static function cluster(array $list, array $comp, array $activeDevices): array
     {
+        $window = $comp['merge_window_ms'];
         $groups = [];
-        $cur = null;
         foreach ($list as $p) {
-            if ($cur !== null && $p['time_ms'] - $cur[0]['time_ms'] <= $comp['merge_window_ms']) {
-                $cur[] = $p;
-                continue;
+            $key = $p['source'] === 'admin' ? 'admin' : $p['device_uuid'];
+            $target = null;
+            foreach ($groups as $i => $g) {
+                if ($p['time_ms'] - $g['first'] <= $window && !isset($g['items'][$key])) {
+                    $target = $i;
+                    break;
+                }
             }
-            if ($cur !== null) {
-                $groups[] = $cur;
+            if ($target === null) {
+                $groups[] = ['first' => $p['time_ms'], 'items' => [$key => $p]];
+            } else {
+                $groups[$target]['items'][$key] = $p;
             }
-            $cur = [$p];
-        }
-        if ($cur !== null) {
-            $groups[] = $cur;
         }
 
         $crossings = [];
+        $prevTime = null;
         foreach ($groups as $g) {
+            $admin = $g['items']['admin'] ?? null;
             $byDevice = [];
-            $admin = null;
-            $flags = [];
             $passIds = [];
-            foreach ($g as $p) {
+            foreach ($g['items'] as $key => $p) {
                 $passIds[] = $p['id'];
-                if ($p['source'] === 'admin') {
-                    $admin = $admin ?? $p; // 管理者入力が複数あれば最も早いもの
-                    continue;
+                if ($key !== 'admin') {
+                    $byDevice[$key] = $p['time_ms'];
                 }
-                if (isset($byDevice[$p['device_uuid']])) {
-                    $flags['duplicate'] = true; // 同じ端末での二重入力 → 早い方を採用
-                    continue;
-                }
-                $byDevice[$p['device_uuid']] = $p['time_ms'];
             }
+            $flags = [];
             $times = array_values($byDevice);
             sort($times);
             $spread = count($times) >= 2 ? end($times) - $times[0] : 0;
@@ -221,10 +232,15 @@ final class Results
                     $flags['spread'] = true;
                 }
             }
+            // 直前の通過から間隔が短い → 二重入力の可能性（記録は有効のまま、確認用）
+            if ($prevTime !== null && $time - $prevTime <= $window) {
+                $flags['short'] = true;
+            }
             $missing = array_values(array_diff($activeDevices, array_keys($byDevice)));
             if ($admin === null && $missing && count($activeDevices) > 1) {
-                $flags['missing'] = true;
+                $flags['missing'] = true; // 1 台のみの記録（有効。参考表示）
             }
+            $prevTime = $time;
 
             $crossings[] = [
                 'time_ms'   => $time,
@@ -275,7 +291,8 @@ final class Results
 
         $legs = [];
         $prev = $start;
-        $flagCount = 0;
+        $flagCount = 0;   // 要確認（警告フラグ）の数
+        $singleCount = 0; // 1 台のみで記録された通過の数（参考）
         for ($i = 0; $i < $legCount; $i++) {
             $c = $crossings[$i] ?? null;
             $leg = [
@@ -291,7 +308,10 @@ final class Results
                 $leg['elapsed_ms'] = $start === null ? null : $c['time_ms'] - $start;
                 $leg['split_ms'] = $prev === null ? null : $c['time_ms'] - $prev;
                 $prev = $c['time_ms'];
-                $flagCount += count(array_diff($c['flags'], ['manual']));
+                $flagCount += count(array_intersect($c['flags'], self::WARN_FLAGS));
+                if (in_array('missing', $c['flags'], true)) {
+                    $singleCount++;
+                }
             }
             $legs[] = $leg;
         }
@@ -329,6 +349,7 @@ final class Results
             'rank'          => null,
             'category_rank' => null,
             'flag_count'    => $flagCount,
+            'single_count'  => $singleCount,
             'last_ms'       => $done > 0 ? $legs[$done - 1]['crossing']['time_ms'] : null,
         ];
     }
