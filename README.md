@@ -49,7 +49,8 @@ php -S 0.0.0.0:8000 -t public
 
 1. **管理画面** で大会を作成（試合名・日程・場所）。
 2. **選手登録** タブで名簿を取り込み（Excel の表をコピー＆貼り付け、または CSV）。
-3. 計測係のスマートフォンで `/m/` を開き、大会を選択（初回は端末名を入力）。
+3. 計測係のスマートフォンで `/m/` を開き、大会を選択。
+   端末名は自動で付きます（例: `端末-A1B2`）。見分けやすい名前にしたい場合は一覧画面右上の「✎」で変更できます。
    選手情報は端末に読み込まれ、以降はオフラインでも表示できます。
 4. 号砲と同時に、いずれかの端末で **「計測スタート」**。
    最初に押された時点の **サーバ時刻** がスタートになり、他の端末はその時刻を共有します（管理画面で修正可）。
@@ -64,9 +65,17 @@ php -S 0.0.0.0:8000 -t public
    黄色のセルは確認が必要な通過です。クリックすると端末ごとの時刻を比較し、除外や正しい時刻の確定ができます。
 8. **Excel 出力** で成績表をダウンロード。
 
+### 計測のやり直し（リセット）
+
+試走・リハーサルの後や、スタートを誤って押した場合は、管理画面の **大会設定 → 計測をリセット** を使います。
+
+- スタートが未記録に戻り、計測端末で再び「計測スタート」を押せるようになります（計測画面にもスタートボタンが表示されます）。
+- それまでの通過記録は削除されず保存されますが、集計・Excel 出力の対象から外れます（計測回 `run_no` で区別）。
+- 計測端末は次の同期で自動的にリセットを検知し、端末内の記録を退避して空にします。
+
 ### サンプル大会
 
-DB を新規作成したとき（大会が 1 件も無いとき）に、選手登録済みの **「サンプル駅伝大会」**（8 チーム。うち 2 名のチームとオープン指定のチームを含む）が自動で登録されます。
+DB を新規作成したとき、または旧版から更新したとき（初回アクセス時に 1 回だけ）に、選手登録済みの **「サンプル駅伝大会」**（8 チーム。うち 2 名のチームとオープン指定のチームを含む）が自動で登録されます。
 操作練習や動作確認に使い、不要になったら「大会設定」から削除してください。大会一覧の「サンプル大会を追加」からいつでも追加できます。
 
 ### 計測パスコード（任意）
@@ -125,11 +134,11 @@ competitions ──┬─< teams ──< runners
 
 | テーブル | 主な列 |
 | --- | --- |
-| `competitions` | `name` 試合名, `event_date` 日程, `location` 場所, `team_size` 正式参加の人数, `status` 準備中/開催中/終了, `start_ms` スタート時刻, `start_set_by`, `device_code` 計測パスコード, `merge_window_ms` 同一通過とみなす時間, `tolerance_ms` 端末間の許容差, `adopt_method` 採用方法 |
+| `competitions` | `name` 試合名, `event_date` 日程, `location` 場所, `team_size` 正式参加の人数, `status` 準備中/開催中/終了, `start_ms` スタート時刻, `start_set_by`, `device_code` 計測パスコード, `merge_window_ms` 同一通過とみなす時間, `tolerance_ms` 端末間の許容差, `adopt_method` 採用方法, `run_no` 計測回（リセットで +1） |
 | `teams` | `competition_id`, `bib`（大会内で一意）, `name`, `category` 区分, `force_open` オープン指定, `status` DNS/DNF/DQ, `note` |
 | `runners` | `team_id`, `leg` 走順, `name`, `kana`, `gender`, `age` 学年・年齢, `affiliation` 所属, `note` |
 | `devices` | `competition_id`, `device_uuid`, `name`, `clock_offset_ms`, `clock_rtt_ms`, `last_seen_at` |
-| `passes` | `uuid`（端末採番・一意）, `competition_id`, `device_uuid`, `source` device/admin, `bib`, `time_ms` 通過時刻, `client_ms` 端末の生時刻, `offset_ms`, `deleted` 端末で削除, `client_updated_ms` 後勝ち判定, `admin_excluded` 管理者が除外 |
+| `passes` | `uuid`（端末採番・一意）, `competition_id`, `run_no` 計測回, `device_uuid`, `source` device/admin, `bib`, `time_ms` 通過時刻, `client_ms` 端末の生時刻, `offset_ms`, `deleted` 端末で削除, `client_updated_ms` 後勝ち判定, `admin_excluded` 管理者が除外 |
 | `audit_log` | 誰がいつ何をしたか（スタート設定・除外・名簿取り込み等） |
 
 通過記録は物理削除せず、端末での削除（`deleted`）と管理者の除外（`admin_excluded`）を分けて保持するため、後から経緯を確認できます。

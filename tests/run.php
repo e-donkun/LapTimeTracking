@@ -47,7 +47,7 @@ check('sample teams', count($steams) === 8);
 $sres = Results::compute($sid);
 $sopen = array_values(array_filter($sres['teams'], fn ($t) => $t['is_open']));
 check('sample open teams (2名 + オープン指定)', count($sopen) === 2);
-check('sample not re-seeded', (function () { Sample::createIfEmpty(); return (int) Db::value('SELECT COUNT(*) FROM competitions') === 1; })());
+check('sample not re-seeded', (function () { Sample::createIfMissing(); return (int) Db::value('SELECT COUNT(*) FROM competitions') === 1; })());
 Db::exec('DELETE FROM competitions WHERE id = ?', [$sid]);
 
 echo "Roster\n";

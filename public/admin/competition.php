@@ -166,12 +166,20 @@ View::header($comp['name'], $user);
           <p class="small muted">計測端末の「計測スタート」を最初に押した時点のサーバ時刻が記録されます。ここで修正もできます。</p>
           <div class="form-actions">
             <button class="btn btn-primary" id="btn-start-now">今の時刻でスタート</button>
-            <button class="btn btn-danger-outline" id="btn-start-clear">クリア</button>
           </div>
           <form id="form-start" class="inline-form">
             <label>時刻を指定<input name="value" placeholder="10:00:00.0" required></label>
             <button class="btn" type="submit">設定</button>
           </form>
+        </div>
+        <div class="card">
+          <h2>計測のやり直し <span class="small muted" id="run-no"></span></h2>
+          <p class="small">
+            試走・リハーサルの後や、スタートを誤って押した場合に使います。
+            スタートを<strong>未記録に戻し</strong>、これまでの通過記録を<strong>集計対象から外します</strong>（記録は削除されず保存されます）。
+            計測端末の記録も自動でリセットされ、もう一度「計測スタート」を押せるようになります。
+          </p>
+          <button class="btn btn-danger-outline" id="btn-run-reset">計測をリセット</button>
         </div>
         <div class="card danger-zone">
           <h2>大会の削除</h2>

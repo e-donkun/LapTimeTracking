@@ -43,6 +43,7 @@
     $('#comp-meta').innerHTML = [c.event_date, c.location].filter(Boolean).map(esc).join('　') +
       '　<span class="badge ' + (c.status === 'active' ? 'badge-run' : c.status === 'finished' ? 'badge-ok' : '') + '">' + (COMP_STATUS[c.status] || c.status) + '</span>';
     $('#start-label').textContent = c.start_ms ? clock(c.start_ms) : '未記録';
+    $('#run-no').textContent = c.run_no > 1 ? '（現在 ' + c.run_no + ' 回目の計測）' : '';
     $('#start-detail').innerHTML = c.start_ms
       ? esc(clock(c.start_ms)) + ' <span class="small muted">（' + esc(c.start_set_by || '') + '）</span>'
       : '未記録';
@@ -659,7 +660,11 @@
       await api('admin.start.set', { id: ID, mode, value });
       await loadComp();
       renderSettings();
-      toast(mode === 'clear' ? 'スタート時刻をクリアしました' : 'スタート時刻を設定しました');
+      toast(mode === 'reset' ? '計測をリセットしました。計測端末で「計測スタート」を押せます' : 'スタート時刻を設定しました');
+      if (mode === 'reset') {
+        st.results = null;
+        st.passes = null;
+      }
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -668,8 +673,8 @@
     const msg = st.comp.start_ms ? '現在のスタート時刻（' + clock(st.comp.start_ms) + '）を今の時刻で上書きします。よろしいですか？' : '今の時刻をスタートとして記録します。';
     if (confirm(msg)) setStart('now');
   });
-  $('#btn-start-clear').addEventListener('click', () => {
-    if (confirm('スタート時刻をクリアしますか？（次に計測端末で「計測スタート」を押した時刻が記録されます）')) setStart('clear');
+  $('#btn-run-reset').addEventListener('click', () => {
+    if (confirm('計測をリセットしますか？\n\nスタート時刻を未記録に戻し、これまでの通過記録を集計対象から外します（記録は保存されます）。\n計測端末の記録もリセットされます。')) setStart('reset');
   });
   $('#form-start').addEventListener('submit', (e) => {
     e.preventDefault();

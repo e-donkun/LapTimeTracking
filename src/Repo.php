@@ -30,7 +30,7 @@ final class Repo
         $rows = Db::all(
             "SELECT c.*,
                     (SELECT COUNT(*) FROM teams t WHERE t.competition_id = c.id) AS team_count,
-                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = c.id AND p.deleted = 0) AS pass_count
+                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = c.id AND p.run_no = c.run_no AND p.deleted = 0) AS pass_count
                FROM competitions c
               ORDER BY COALESCE(c.event_date, '') DESC, c.id DESC"
         );
@@ -40,7 +40,7 @@ final class Repo
     /** @param array<string, mixed> $row */
     private static function castCompetition(array $row): array
     {
-        foreach (['id', 'team_size', 'merge_window_ms', 'tolerance_ms', 'team_count', 'pass_count'] as $k) {
+        foreach (['id', 'team_size', 'merge_window_ms', 'tolerance_ms', 'run_no', 'team_count', 'pass_count'] as $k) {
             if (array_key_exists($k, $row)) {
                 $row[$k] = (int) $row[$k];
             }
@@ -203,12 +203,16 @@ final class Repo
         return (int) $s;
     }
 
-    /** @return array<int, array<string, mixed>> */
+    /**
+     * 現在の計測回の通過記録
+     * @return array<int, array<string, mixed>>
+     */
     public static function passes(int $competitionId): array
     {
         $rows = Db::all(
             'SELECT p.*, d.name AS device_name
                FROM passes p
+               JOIN competitions c ON c.id = p.competition_id AND c.run_no = p.run_no
                LEFT JOIN devices d ON d.competition_id = p.competition_id AND d.device_uuid = p.device_uuid
               WHERE p.competition_id = ?
               ORDER BY p.time_ms DESC, p.id DESC',
@@ -233,9 +237,10 @@ final class Repo
     {
         $rows = Db::all(
             "SELECT d.*,
-                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = d.competition_id AND p.device_uuid = d.device_uuid AND p.deleted = 0) AS pass_count,
-                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = d.competition_id AND p.device_uuid = d.device_uuid AND p.deleted = 1) AS deleted_count
-               FROM devices d WHERE d.competition_id = ? ORDER BY d.first_seen_at, d.id",
+                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = d.competition_id AND p.run_no = c.run_no AND p.device_uuid = d.device_uuid AND p.deleted = 0) AS pass_count,
+                    (SELECT COUNT(*) FROM passes p WHERE p.competition_id = d.competition_id AND p.run_no = c.run_no AND p.device_uuid = d.device_uuid AND p.deleted = 1) AS deleted_count
+               FROM devices d JOIN competitions c ON c.id = d.competition_id
+              WHERE d.competition_id = ? ORDER BY d.first_seen_at, d.id",
             [$competitionId]
         );
         foreach ($rows as &$r) {

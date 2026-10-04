@@ -170,6 +170,7 @@ final class Api
             'status'          => $c['status'],
             'start_ms'        => $c['start_ms'],
             'merge_window_ms' => $c['merge_window_ms'],
+            'run_no'          => $c['run_no'],
         ];
     }
 
@@ -182,15 +183,24 @@ final class Api
         $comp = self::deviceCompetition($in);
         $device = (array) ($in['device'] ?? []);
         Repo::touchDevice($comp['id'], $device);
+        $state = fn () => [
+            'start_ms'    => Repo::competitionOrFail($comp['id'])['start_ms'],
+            'competition' => self::publicCompetition(Repo::competitionOrFail($comp['id'])),
+            'server_ms'   => Util::nowMs(),
+        ];
+        // リセット前の計測回で押されたスタート（オフライン送信の遅延など）は採用しない
+        if (isset($in['run_no']) && (int) $in['run_no'] !== $comp['run_no']) {
+            return ['created' => false, 'stale_run' => true] + $state();
+        }
         $now = Util::nowMs();
         $startMs = $now;
         $by = '端末:' . mb_substr((string) ($device['name'] ?? ''), 0, 40);
         if (isset($in['estimated_ms']) && is_numeric($in['estimated_ms'])) {
             $est = (int) $in['estimated_ms'];
-            if ($est > $now || $now - $est > 86400000) {
-                throw new ApiError('推定スタート時刻が不正です');
+            if ($now - $est > 86400000) {
+                throw new ApiError('推定スタート時刻が古すぎるため採用できません（管理画面で設定してください）', 400, 'start_too_old');
             }
-            $startMs = $est;
+            $startMs = min($est, $now); // 端末の時刻差の誤差で未来になった場合は現在時刻
             $by .= '（オフライン時の推定）';
         }
         $updated = Db::exec(
@@ -203,8 +213,7 @@ final class Api
         if ($updated) {
             Util::audit($comp['id'], 'start', $by . ' ' . Util::clock($startMs));
         }
-        $comp = Repo::competitionOrFail($comp['id']);
-        return ['start_ms' => $comp['start_ms'], 'created' => $updated > 0, 'server_ms' => Util::nowMs()];
+        return ['created' => $updated > 0] + $state();
     }
 
     /**
@@ -227,8 +236,8 @@ final class Api
         }
         Db::transaction(function () use ($passes, $comp, $deviceUuid, $now, &$accepted, &$rejected) {
             $st = Db::pdo()->prepare(
-                "INSERT INTO passes (uuid, competition_id, device_uuid, source, bib, time_ms, client_ms, offset_ms, deleted, deleted_ms, client_updated_ms)
-                 VALUES (:uuid, :c, :d, 'device', :bib, :t, :cm, :om, :del, :dms, :upd)
+                "INSERT INTO passes (uuid, competition_id, run_no, device_uuid, source, bib, time_ms, client_ms, offset_ms, deleted, deleted_ms, client_updated_ms)
+                 VALUES (:uuid, :c, :run, :d, 'device', :bib, :t, :cm, :om, :del, :dms, :upd)
                  ON CONFLICT (uuid) DO UPDATE SET
                      deleted = excluded.deleted,
                      deleted_ms = excluded.deleted_ms,
@@ -250,6 +259,7 @@ final class Api
                 $st->execute([
                     'uuid' => $uuid,
                     'c'    => $comp['id'],
+                    'run'  => isset($p['run_no']) && (int) $p['run_no'] >= 1 ? (int) $p['run_no'] : $comp['run_no'],
                     'd'    => $deviceUuid,
                     'bib'  => $bib,
                     't'    => (int) $t,
@@ -353,7 +363,7 @@ final class Api
         return Roster::import($comp['id'], $parsed['teams'], $mode) + ['warnings' => $parsed['warnings']];
     }
 
-    /** スタート時刻の設定: mode = now / clock / elapsed_shift / clear */
+    /** スタート時刻の設定: mode = now / clock / reset（計測のやり直し） */
     private static function adminStartSet(array $in): array
     {
         $comp = Repo::competitionOrFail(self::int($in, 'id'));
@@ -370,10 +380,15 @@ final class Api
                     throw new ApiError('時刻は HH:MM:SS.s の形式で入力してください');
                 }
                 break;
-            case 'clear':
-                $ms = null;
-                $by = null;
-                break;
+            case 'reset':
+                // スタートを未記録に戻し、計測回を進める。これまでの通過記録は削除せず、集計対象から外れる。
+                Db::exec(
+                    "UPDATE competitions SET start_ms = NULL, start_set_by = NULL, start_set_at = NULL, run_no = run_no + 1,
+                            status = 'preparing', updated_at = datetime('now','localtime') WHERE id = ?",
+                    [$comp['id']]
+                );
+                Util::audit($comp['id'], 'run.reset', ($comp['run_no'] + 1) . '回目へ (旧スタート ' . Util::clock($comp['start_ms']) . ')');
+                return ['start_ms' => null, 'run_no' => $comp['run_no'] + 1];
             default:
                 throw new ApiError('不正な指定です');
         }
@@ -439,9 +454,9 @@ final class Api
         }
         $uuid = Util::uuid();
         Db::exec(
-            "INSERT INTO passes (uuid, competition_id, device_uuid, source, bib, time_ms, note, client_updated_ms)
-             VALUES (?, ?, 'admin', 'admin', ?, ?, ?, ?)",
-            [$uuid, $comp['id'], $bib, $ms, trim((string) ($in['note'] ?? '')), Util::nowMs()]
+            "INSERT INTO passes (uuid, competition_id, run_no, device_uuid, source, bib, time_ms, note, client_updated_ms)
+             VALUES (?, ?, ?, 'admin', 'admin', ?, ?, ?, ?)",
+            [$uuid, $comp['id'], $comp['run_no'], $bib, $ms, trim((string) ($in['note'] ?? '')), Util::nowMs()]
         );
         Util::audit($comp['id'], 'pass.add', Util::bib($bib) . ' ' . Util::clock($ms));
         return ['uuid' => $uuid, 'time_ms' => $ms];

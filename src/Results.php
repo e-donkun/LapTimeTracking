@@ -42,9 +42,9 @@ final class Results
 
         $passes = Db::all(
             'SELECT id, uuid, device_uuid, source, bib, time_ms FROM passes
-              WHERE competition_id = ? AND deleted = 0 AND admin_excluded = 0
+              WHERE competition_id = ? AND run_no = ? AND deleted = 0 AND admin_excluded = 0
               ORDER BY bib, time_ms, id',
-            [$competitionId]
+            [$competitionId, $comp['run_no']]
         );
 
         // 「稼働中の端末」= スタート後に 1 件以上記録した端末。未記録判定に使う。
@@ -111,6 +111,7 @@ final class Results
                 'start_ms'     => $start,
                 'tolerance_ms' => $comp['tolerance_ms'],
                 'adopt_method' => $comp['adopt_method'],
+                'run_no'       => $comp['run_no'],
             ],
             'server_ms'      => Util::nowMs(),
             'devices'        => array_map(fn ($d) => [

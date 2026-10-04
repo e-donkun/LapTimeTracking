@@ -3,7 +3,8 @@ declare(strict_types=1);
 
 /**
  * サンプル大会（動作確認・操作練習用）
- * DB を新規作成したとき（大会が 1 件も無いとき）に自動で登録される。管理画面の大会一覧からも追加できる。
+ * DB の新規作成時、または旧版からの更新時に 1 回だけ自動で登録される（削除しても再登録はしない）。
+ * 管理画面の大会一覧からも追加できる。
  */
 final class Sample
 {
@@ -79,10 +80,10 @@ final class Sample
         return $id;
     }
 
-    /** 大会が 1 件も無ければサンプルを登録する */
-    public static function createIfEmpty(): void
+    /** 同名のサンプル大会が無ければ登録する */
+    public static function createIfMissing(): void
     {
-        if ((int) Db::value('SELECT COUNT(*) FROM competitions') === 0) {
+        if ((int) Db::value('SELECT COUNT(*) FROM competitions WHERE name = ?', [self::NAME]) === 0) {
             self::create();
         }
     }

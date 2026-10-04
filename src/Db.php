@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 final class Db
 {
-    private const SCHEMA_VERSION = 2;
+    private const SCHEMA_VERSION = 3;
 
     /** 移行処理の結果、接続後にサンプル大会の登録が必要か */
     private static bool $seedSample = false;
@@ -17,7 +17,7 @@ final class Db
             if (self::$seedSample) {
                 // 接続確立後でないと Repo 経由の登録ができないため、ここで実行する
                 self::$seedSample = false;
-                Sample::createIfEmpty();
+                Sample::createIfMissing();
             }
         }
         return self::$pdo;
@@ -54,11 +54,15 @@ final class Db
             $version = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
             if ($version < 1) {
                 $pdo->exec((string) file_get_contents(__DIR__ . '/schema.sql'));
+            } elseif ($version < 3) {
+                // v3: 計測のやり直し（リセット）用に計測回を追加
+                $pdo->exec('ALTER TABLE competitions ADD COLUMN run_no INTEGER NOT NULL DEFAULT 1');
+                $pdo->exec('ALTER TABLE passes ADD COLUMN run_no INTEGER NOT NULL DEFAULT 1');
             }
             if ($version < 2) {
-                self::$seedSample = true; // サンプル大会（大会が無い場合のみ）
+                self::$seedSample = true; // サンプル大会（この移行時に 1 回だけ）
             }
-            // 将来のマイグレーションはここに追加: if ($version < 3) { ... }
+            // 将来のマイグレーションはここに追加: if ($version < 4) { ... }
             $pdo->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
             $pdo->exec('COMMIT');
         } catch (Throwable $e) {

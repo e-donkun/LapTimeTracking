@@ -86,6 +86,8 @@
   // ------------------------------------------------------------------ 端末情報・時刻同期
 
   const device = store.get('device', null) || { uuid: uuid(), name: '' };
+  // 端末名は必須にしない（未設定ならID から自動で付ける。一覧画面の「✎」で変更可）
+  if (!device.name) device.name = '端末-' + device.uuid.slice(0, 4).toUpperCase();
   store.set('device', device);
 
   const clockState = store.get('clock', { offset: null, rtt: null, at: 0 });
@@ -188,15 +190,51 @@
     store.set('passes.' + app.compId, app.passes);
   }
 
-  async function fetchRoster() {
-    const res = await fetchJson('competition', {}, { id: app.compId });
-    app.comp = res.competition;
+  async function fetchRoster(timeout) {
+    const res = await fetchJson('competition', { timeout }, { id: app.compId });
     app.teams = {};
     res.teams.forEach((t) => { app.teams[t.bib] = t; });
     app.rosterAt = Date.now();
-    setRace(res.race);
-    store.set('comp.' + app.compId, { competition: res.competition, teams: res.teams, at: app.rosterAt, race: app.race });
+    applyCompetition(res.competition, res.race);
+    store.set('comp.' + app.compId, { competition: app.comp, teams: res.teams, at: app.rosterAt, race: app.race });
     return res;
+  }
+
+  /**
+   * サーバの大会情報を反映する。
+   * 管理画面で「計測をリセット」されて計測回 (run_no) が進んでいれば、それより前の端末内の記録を退避して空にする。
+   */
+  function applyCompetition(comp, race) {
+    if (!comp) return { startChanged: false, reset: false };
+    const prevStart = app.comp ? app.comp.start_ms : undefined;
+    app.comp = Object.assign({}, app.comp || {}, comp);
+    const run = comp.run_no || 1;
+    let reset = false;
+    const old = app.passes.filter((p) => (p.run_no || 1) < run);
+    if (old.length) {
+      store.set('archive.' + app.compId, store.get('archive.' + app.compId, []).concat(old));
+      app.passes = app.passes.filter((p) => (p.run_no || 1) >= run);
+      savePasses();
+      app.lastRecord = null;
+      reset = true;
+    }
+    if (app.pendingStart && (app.pendingStart.run_no || 1) < run) {
+      app.pendingStart = null;
+      store.set('pendingStart.' + app.compId, null);
+      reset = true;
+    }
+    if (reset) {
+      app.race = null;
+      toast('管理画面で計測がリセットされました。「計測スタート」からやり直せます', 'warn');
+    }
+    setRace(race);
+    const cache = store.get('comp.' + app.compId, null);
+    if (cache) {
+      cache.competition = app.comp;
+      cache.race = app.race;
+      store.set('comp.' + app.compId, cache);
+    }
+    return { startChanged: prevStart !== app.comp.start_ms, reset };
   }
 
   function pendingPasses() {
@@ -275,10 +313,22 @@
       if (app.pendingStart) {
         const ps = app.pendingStart;
         const est = ps.offset_ms == null ? ps.client_ms + clockState.offset : ps.server_ms;
-        const res = await fetchJson('start', { method: 'POST', body: { competition_id: app.compId, device: deviceInfo(), estimated_ms: est } });
-        app.pendingStart = null;
-        store.set('pendingStart.' + app.compId, null);
-        if (app.comp) app.comp.start_ms = res.start_ms;
+        try {
+          const res = await fetchJson('start', {
+            method: 'POST',
+            body: { competition_id: app.compId, device: deviceInfo(), estimated_ms: est, run_no: ps.run_no || 1 },
+          });
+          app.pendingStart = null;
+          store.set('pendingStart.' + app.compId, null);
+          if (applyCompetition(res.competition).startChanged) render();
+        } catch (e) {
+          if (e.network || e.code === 'device_code') throw e;
+          // サーバに拒否されたスタートは破棄する（通過記録の同期を止めないため）
+          app.pendingStart = null;
+          store.set('pendingStart.' + app.compId, null);
+          toast('オフライン時のスタートを登録できませんでした：' + e.message, 'error');
+          render();
+        }
       }
 
       const pending = pendingPasses().slice(0, 500);
@@ -289,7 +339,7 @@
             competition_id: app.compId,
             device: deviceInfo(),
             passes: pending.map((p) => ({
-              uuid: p.uuid, bib: p.bib, time_ms: p.time_ms, client_ms: p.client_ms, offset_ms: p.offset_ms,
+              uuid: p.uuid, run_no: p.run_no || 1, bib: p.bib, time_ms: p.time_ms, client_ms: p.client_ms, offset_ms: p.offset_ms,
               deleted: p.deleted ? 1 : 0, deleted_ms: p.deleted_ms || null, updated_ms: p.updated_ms,
             })),
           },
@@ -305,17 +355,9 @@
           if (p) p.rejected = true;
         });
         savePasses();
-        if (app.comp && res.competition) {
-          const startChanged = app.comp.start_ms !== res.competition.start_ms;
-          Object.assign(app.comp, res.competition);
-          setRace(res.race);
-          const cache = store.get('comp.' + app.compId, null);
-          if (cache) {
-            cache.competition = app.comp;
-            cache.race = app.race;
-            store.set('comp.' + app.compId, cache);
-          }
-          if (startChanged) render();
+        if (res.competition) {
+          const r = applyCompetition(res.competition, res.race);
+          if (r.startChanged || r.reset) render();
         }
         app.lastSync = Date.now();
       }
@@ -405,7 +447,6 @@
       $('#list-msg').textContent = 'オフラインのため前回の一覧を表示しています';
       $('#list-msg').className = 'hint warn';
     }
-    if (!device.name) askName();
   }
 
   // ------------------------------------------------------------------ 大会トップ（計測スタート）
@@ -426,7 +467,11 @@
       '<dt>時刻同期</dt><dd id="clock-info">' + clockInfo() + '</dd>' +
       '<dt>記録</dt><dd>' + app.passes.filter((p) => !p.deleted).length + ' 件（未送信 ' + pendingPasses().length + '）</dd>' +
       '</dl></div>' +
-      '<button class="btn-start" data-act="start">' + (started || app.pendingStart ? '計測スタート<small>スタート済み・計測画面へ</small>' : '計測スタート<small>押した時刻がレースのスタートになります</small>') + '</button>' +
+      (started || app.pendingStart
+        ? '<button class="btn-start started" data-act="start">計測画面へ<small>' +
+          (app.race && app.race.finished ? '全走者ゴール・計測終了' : started ? 'スタート済み ' + clock(c.start_ms) : 'スタート送信待ち') + '</small></button>' +
+          '<p class="hint small">やり直す場合は、管理画面の「大会設定 → 計測をリセット」を使います。</p>'
+        : '<button class="btn-start" data-act="start">計測スタート<small>押した時刻がレースのスタートになります</small></button>') +
       '<button class="btn-sub" data-act="reload">選手情報を再読み込み</button>' +
       '</main>';
   }
@@ -454,21 +499,32 @@
   }
 
   async function pressStart() {
-    if (!device.name) {
-      await askName();
-      if (!device.name) return;
+    // 管理画面でリセット・修正されている可能性があるため、まず最新の状態を確認する（オフラインなら端末内の情報で続行）
+    try {
+      await fetchRoster(3000);
+      app.online = true;
+    } catch (e) {
+      if (e.code === 'device_code') return askCode();
+      if (!e.network) return toast(e.message, 'error');
+      app.online = false;
     }
     const c = app.comp;
     if ((c && c.start_ms) || app.pendingStart) {
-      location.hash = '#/c/' + app.compId + '/run';
+      goRun();
       return;
     }
     const ok = await confirmDialog('計測スタート', 'レースのスタート時刻を記録します。<br><b>号砲と同時に</b>押してください。<br><small>他の端末が先に押していれば、その時刻が使われます。</small>', 'スタート');
     if (!ok) return;
     const client = Date.now();
+    const runNo = (app.comp && app.comp.run_no) || 1;
     try {
-      const res = await fetchJson('start', { method: 'POST', body: { competition_id: app.compId, device: deviceInfo() } });
-      app.comp.start_ms = res.start_ms;
+      const res = await fetchJson('start', { method: 'POST', body: { competition_id: app.compId, device: deviceInfo(), run_no: runNo } });
+      applyCompetition(res.competition);
+      if (res.stale_run) {
+        toast('計測がリセットされていました。もう一度「計測スタート」を押してください', 'warn');
+        render();
+        return;
+      }
       toast(res.created ? 'スタートを記録しました ' + clock(res.start_ms) : '既にスタート済みです ' + clock(res.start_ms));
       vibrate(80);
     } catch (e) {
@@ -478,11 +534,17 @@
         return;
       }
       // オフライン: 推定サーバ時刻を保存しておき、通信回復後に送信する
-      app.pendingStart = { client_ms: client, server_ms: clockKnown() ? client + clockState.offset : null, offset_ms: clockState.offset };
+      app.pendingStart = { client_ms: client, server_ms: clockKnown() ? client + clockState.offset : null, offset_ms: clockState.offset, run_no: runNo };
       store.set('pendingStart.' + app.compId, app.pendingStart);
       toast('オフラインのため端末に記録しました。通信回復後に送信します', 'warn');
     }
-    location.hash = '#/c/' + app.compId + '/run';
+    goRun();
+  }
+
+  function goRun() {
+    const h = '#/c/' + app.compId + '/run';
+    if (location.hash !== h) location.hash = h;
+    else render();
   }
 
   // ------------------------------------------------------------------ 計測画面
@@ -512,7 +574,8 @@
   }
 
   function viewInput() {
-    return '<section class="timer"><div class="elapsed" id="elapsed">--:--.-</div><div class="timer-sub" id="timer-sub"></div></section>' +
+    return '<section class="timer"><div class="elapsed" id="elapsed">--:--.-</div><div class="timer-sub" id="timer-sub"></div>' +
+      '<button class="btn-start-inline" data-act="start" id="run-start" hidden>計測スタート</button></section>' +
       '<section class="entry">' +
       '<label class="bib-input-wrap"><input id="bib-input" class="bib-input" inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" placeholder="--" aria-label="ビブ番号"></label>' +
       '<div class="entry-info" id="entry-info"><span class="muted">ビブ番号（2桁）を入力</span></div>' +
@@ -572,6 +635,7 @@
     const now = Date.now();
     const p = {
       uuid: uuid(),
+      run_no: (app.comp && app.comp.run_no) || 1,
       bib: b,
       client_ms: at.client,
       offset_ms: at.offset,
@@ -776,6 +840,8 @@
       el.textContent = finish != null ? dur(finish - start) : s ? dur(Math.max(0, now - s)) : '--:--.-';
       const timer = $('.timer');
       if (timer) timer.classList.toggle('stopped', finish != null);
+      const rs = $('#run-start');
+      if (rs) rs.hidden = !!(start || ps);
       const sub = $('#timer-sub');
       if (sub) {
         sub.textContent = finish != null ? '全走者ゴール・計測終了（スタート ' + clock(start) + '）'
@@ -795,6 +861,10 @@
 
   // ------------------------------------------------------------------ ダイアログ
 
+  // <dialog> 非対応ブラウザ（iOS 15.3 以前など）では標準の confirm / prompt で代替する
+  const HAS_DIALOG = typeof HTMLDialogElement === 'function' && typeof HTMLDialogElement.prototype.showModal === 'function';
+  const plain = (html) => String(html).replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '');
+
   function dialog(html) {
     const dlg = $('#dlg');
     dlg.innerHTML = html;
@@ -803,6 +873,7 @@
   }
 
   function confirmDialog(title, body, okLabel) {
+    if (!HAS_DIALOG) return Promise.resolve(window.confirm(plain(title) + '\n\n' + plain(body)));
     return new Promise((resolve) => {
       const dlg = dialog('<form method="dialog"><h2>' + title + '</h2><p>' + body + '</p><div class="dlg-actions">' +
         '<button value="cancel" class="btn-sub">キャンセル</button><button value="ok" class="btn-primary">' + esc(okLabel || 'OK') + '</button></div></form>');
@@ -810,7 +881,19 @@
     });
   }
 
+  function saveName(name) {
+    device.name = name.trim().slice(0, 20);
+    store.set('device', device);
+    render();
+    syncNow(true);
+  }
+
   function askName() {
+    if (!HAS_DIALOG) {
+      const n = window.prompt('この端末の名前（例: 計測1 山田）', device.name || '');
+      if (n && n.trim()) saveName(n);
+      return Promise.resolve();
+    }
     return new Promise((resolve) => {
       const dlg = dialog('<form method="dialog"><h2>この端末の名前</h2><p class="small">管理画面で、どの端末の記録か見分けるために使います。</p>' +
         '<input name="n" maxlength="20" placeholder="例: 計測1 山田" value="' + esc(device.name) + '" required>' +
@@ -818,12 +901,7 @@
       const input = $('input', dlg);
       setTimeout(() => input.focus(), 50);
       dlg.onclose = () => {
-        if (dlg.returnValue === 'ok' && input.value.trim()) {
-          device.name = input.value.trim();
-          store.set('device', device);
-          render();
-          syncNow(true);
-        }
+        if (dlg.returnValue === 'ok' && input.value.trim()) saveName(input.value);
         resolve();
       };
     });
@@ -832,6 +910,16 @@
   let askingCode = false;
   function askCode() {
     if (askingCode) return;
+    const saveCode = (code) => {
+      store.set('code.' + app.compId, code.trim());
+      refreshComp();
+      syncNow(true);
+    };
+    if (!HAS_DIALOG) {
+      const code = window.prompt('計測パスコード（管理者に確認してください）', '');
+      if (code != null) saveCode(code);
+      return;
+    }
     askingCode = true;
     const dlg = dialog('<form method="dialog"><h2>計測パスコード</h2><p class="small">この大会は計測にパスコードが必要です。管理者に確認してください。</p>' +
       '<input name="c" autocomplete="off" required>' +
@@ -840,11 +928,7 @@
     setTimeout(() => input.focus(), 50);
     dlg.onclose = () => {
       askingCode = false;
-      if (dlg.returnValue === 'ok') {
-        store.set('code.' + app.compId, input.value.trim());
-        refreshComp();
-        syncNow(true);
-      }
+      if (dlg.returnValue === 'ok') saveCode(input.value);
     };
   }
 

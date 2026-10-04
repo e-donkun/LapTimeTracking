@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS competitions (
     merge_window_ms INTEGER NOT NULL DEFAULT 10000,      -- 同一通過とみなす時間窓
     tolerance_ms    INTEGER NOT NULL DEFAULT 1000,       -- 端末間の許容差（超えたら警告）
     adopt_method    TEXT    NOT NULL DEFAULT 'median',   -- median / earliest
+    run_no          INTEGER NOT NULL DEFAULT 1,          -- 計測回（リセットのたびに +1。集計は現在の回のみ）
     note            TEXT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS passes (
     competition_id    INTEGER NOT NULL REFERENCES competitions(id) ON DELETE CASCADE,
     device_uuid       TEXT    NOT NULL,                  -- 管理者入力は 'admin'
     source            TEXT    NOT NULL DEFAULT 'device', -- device / admin
+    run_no            INTEGER NOT NULL DEFAULT 1,        -- どの計測回の記録か
     bib               INTEGER NOT NULL,
     time_ms           INTEGER NOT NULL,                  -- 通過時刻（サーバ時刻基準）
     client_ms         INTEGER,                           -- 端末の生時刻
