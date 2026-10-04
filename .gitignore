@@ -1,0 +1,5 @@
+/config.local.php
+/data/*
+!/data/.htaccess
+/vendor/
+.DS_Store
