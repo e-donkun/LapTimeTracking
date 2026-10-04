@@ -131,6 +131,9 @@ textarea { width: 100%; resize: vertical; }
 .comp-head { display: grid; grid-template-columns: 1fr auto auto; gap: 20px; align-items: center; margin-bottom: 12px; }
 .comp-clock { text-align: right; }
 .elapsed { font-family: var(--mono); font-size: 30px; font-weight: 700; line-height: 1.1; }
+.elapsed.stopped { color: var(--ok); }
+#race-label { color: var(--muted); }
+#race-label.done { color: var(--ok); font-weight: 700; }
 .tabs { display: flex; gap: 2px; border-bottom: 2px solid var(--line); margin-bottom: 16px; overflow-x: auto; }
 .tabs button {
   padding: 10px 16px; border: none; background: none; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;

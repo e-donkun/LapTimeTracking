@@ -52,6 +52,7 @@ final class Api
             'admin.competitions'       => ['GET', 'adminCompetitions'],
             'admin.competition.save'   => ['POST', 'adminCompetitionSave'],
             'admin.competition.delete' => ['POST', 'adminCompetitionDelete'],
+            'admin.sample.create'      => ['POST', 'adminSampleCreate'],
             'admin.competition'        => ['GET', 'adminCompetition'],
             'admin.team.save'          => ['POST', 'adminTeamSave'],
             'admin.team.delete'        => ['POST', 'adminTeamDelete'],
@@ -153,6 +154,7 @@ final class Api
         return [
             'competition' => self::publicCompetition($comp),
             'teams'       => $teams,
+            'race'        => Results::race($comp['id']),
             'server_ms'   => Util::nowMs(),
         ];
     }
@@ -266,6 +268,7 @@ final class Api
             'accepted'    => $accepted,
             'rejected'    => $rejected,
             'competition' => self::publicCompetition($fresh),
+            'race'        => Results::race($comp['id']),
             'server_ms'   => Util::nowMs(),
         ];
     }
@@ -290,6 +293,7 @@ final class Api
             'competition' => $comp,
             'teams'       => Repo::teams($comp['id']),
             'devices'     => Repo::devices($comp['id']),
+            'race'        => Results::race($comp['id']),
             'server_ms'   => Util::nowMs(),
         ];
     }
@@ -309,6 +313,11 @@ final class Api
         Db::exec('DELETE FROM competitions WHERE id = ?', [$comp['id']]);
         Util::audit($comp['id'], 'competition.delete', $comp['name']);
         return [];
+    }
+
+    private static function adminSampleCreate(array $in): array
+    {
+        return ['id' => Sample::create()];
     }
 
     private static function adminTeamSave(array $in): array

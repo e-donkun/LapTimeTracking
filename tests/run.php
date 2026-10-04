@@ -38,6 +38,18 @@ check('parseDuration full-width', Util::parseDuration('１２：３４．５') =
 check('parseClock', Util::parseClock('2026-10-04 10:00:01.2', null) === strtotime('2026-10-04 10:00:01') * 1000 + 200);
 check('bib pad', Util::bib(5) === '05');
 
+echo "Sample\n";
+$sample = Db::all('SELECT * FROM competitions');
+check('sample seeded on new DB', count($sample) === 1 && $sample[0]['name'] === Sample::NAME);
+$sid = (int) $sample[0]['id'];
+$steams = Repo::teams($sid);
+check('sample teams', count($steams) === 8);
+$sres = Results::compute($sid);
+$sopen = array_values(array_filter($sres['teams'], fn ($t) => $t['is_open']));
+check('sample open teams (2名 + オープン指定)', count($sopen) === 2);
+check('sample not re-seeded', (function () { Sample::createIfEmpty(); return (int) Db::value('SELECT COUNT(*) FROM competitions') === 1; })());
+Db::exec('DELETE FROM competitions WHERE id = ?', [$sid]);
+
 echo "Roster\n";
 $csv = "ビブ,チーム名,区分,走順,氏名,フリガナ\n"
      . "01,チームA,一般,1,A1,エーイチ\n,,,2,A2,\n,,,3,A3,\n"
@@ -58,7 +70,7 @@ $r = Roster::import($cid, $parsed['teams'], 'replace');
 check('import created', $r['created'] === 3);
 $r = Roster::import($cid, $parsed['teams'], 'merge');
 check('import merge updates', $r['updated'] === 3 && $r['created'] === 0);
-check('runners stored', (int) Db::value('SELECT COUNT(*) FROM runners') === 8);
+check('runners stored', (int) Db::value('SELECT COUNT(*) FROM runners r JOIN teams t ON t.id = r.team_id WHERE t.competition_id = ?', [$cid]) === 8);
 
 echo "Results\n";
 $start = strtotime('2026-10-04 10:00:00') * 1000;
@@ -80,6 +92,7 @@ function pass(int $cid, string $dev, int $bib, int $ms, int $deleted = 0): strin
     return $uuid;
 }
 $m = fn (float $sec) => $start + (int) round($sec * 1000);
+check('race not finished before any pass', Results::race($cid)['finished'] === false && Results::race($cid)['teams'] === 3);
 // チームA: 両端末が記録（少しずれ）
 pass($cid, $devA, 1, $m(600.0));  pass($cid, $devB, 1, $m(600.4));
 pass($cid, $devA, 1, $m(1250.0)); pass($cid, $devB, 1, $m(1250.2));
@@ -97,6 +110,7 @@ pass($cid, $devA, 77, $m(900.0));
 pass($cid, $devB, 2, $m(-30.0));
 
 $res = Results::compute($cid);
+check('race finished at last team finish', $res['race']['finished'] === true && $res['race']['elapsed_ms'] === 1901500, json_encode($res['race']));
 $byBib = [];
 foreach ($res['teams'] as $t) {
     $byBib[$t['bib']] = $t;
@@ -132,6 +146,14 @@ foreach ($res['teams'] as $t) {
         check('admin clears spread', !in_array('spread', $t['legs'][2]['crossing']['flags'], true));
     }
 }
+// 全チームのゴールが揃うとレース終了（最後のゴール時刻でタイマー停止）
+$race = Results::race($cid);
+check('race finish follows admin override', $race['finished'] === true && $race['finish_ms'] === $m(1901.0) && $race['elapsed_ms'] === 1901000, json_encode($race));
+// DNF のチームは対象外
+Db::exec("UPDATE teams SET status = 'DNF' WHERE competition_id = ? AND bib = 3", [$cid]);
+check('DNF team excluded from race state', Results::race($cid)['teams'] === 2);
+Db::exec("UPDATE teams SET status = '' WHERE competition_id = ? AND bib = 3", [$cid]);
+
 // 管理者による除外
 Db::exec("UPDATE passes SET admin_excluded = 1 WHERE bib = 2 AND time_ms = ?", [$m(1200.0)]);
 $res = Results::compute($cid);
@@ -140,6 +162,7 @@ foreach ($res['teams'] as $t) {
         check('exclusion drops crossing', $t['legs_done'] === 2 && $t['state'] === 'running');
     }
 }
+check('race resumes when a finish is removed', $res['race']['finished'] === false);
 // earliest 採用
 Db::exec("UPDATE competitions SET adopt_method = 'earliest' WHERE id = ?", [$cid]);
 $res = Results::compute($cid);

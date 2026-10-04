@@ -8,7 +8,10 @@ View::header('大会一覧', $user);
 ?>
 <div class="page-head">
   <h1>大会一覧</h1>
-  <button class="btn btn-primary" id="btn-new">＋ 新しい大会</button>
+  <div class="form-actions">
+    <button class="btn" id="btn-sample" title="動作確認・操作練習用に、選手登録済みのサンプル大会を追加します">サンプル大会を追加</button>
+    <button class="btn btn-primary" id="btn-new">＋ 新しい大会</button>
+  </div>
 </div>
 
 <section class="card" id="new-form" hidden>

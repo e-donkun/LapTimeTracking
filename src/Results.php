@@ -130,7 +130,35 @@ final class Results
                 'flagged'  => $flagged,
                 'unknown'  => count($unknown),
             ],
+            'race'           => self::raceState($out, $start),
             'flag_labels'    => self::FLAG_LABELS,
+        ];
+    }
+
+    /** レース全体の状態のみ（計測端末の同期・管理画面ヘッダ用） */
+    public static function race(int $competitionId): array
+    {
+        return self::compute($competitionId)['race'];
+    }
+
+    /**
+     * 全走者の記録が揃ったか（= タイマー停止）。DNS/DNF/DQ のチームは対象外。
+     * 揃っていれば最後にゴールした時刻を finish_ms とする。
+     * @param array<int, array<string, mixed>> $teams
+     * @return array<string, mixed>
+     */
+    private static function raceState(array $teams, ?int $start): array
+    {
+        $active = array_filter($teams, fn ($t) => $t['status'] === '');
+        $done = array_filter($active, fn ($t) => $t['state'] === 'finished');
+        $finished = $start !== null && count($active) > 0 && count($done) === count($active);
+        $finishMs = $finished ? max(array_map(fn ($t) => $t['last_ms'], $done)) : null;
+        return [
+            'finished'       => $finished,
+            'finish_ms'      => $finishMs,
+            'elapsed_ms'     => $finishMs !== null ? $finishMs - $start : null,
+            'teams'          => count($active),
+            'teams_finished' => count($done),
         ];
     }
 

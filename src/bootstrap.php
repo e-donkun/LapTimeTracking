@@ -19,6 +19,7 @@ require_once __DIR__ . '/Util.php';
 require_once __DIR__ . '/Repo.php';
 require_once __DIR__ . '/Results.php';
 require_once __DIR__ . '/Roster.php';
+require_once __DIR__ . '/Sample.php';
 require_once __DIR__ . '/Xlsx.php';
 require_once __DIR__ . '/Export.php';
 require_once __DIR__ . '/View.php';

@@ -168,6 +168,7 @@
     inputAt: null, // 1 桁目を押した時の {server, client, offset}
     lastRecord: null,
     results: null,
+    race: null, // サーバ集計によるレース状態 {finished, finish_ms, ...}
   };
 
   function loadCompetition(id) {
@@ -177,6 +178,7 @@
     app.teams = {};
     if (cache) cache.teams.forEach((t) => { app.teams[t.bib] = t; });
     app.rosterAt = cache ? cache.at : null;
+    app.race = cache ? cache.race || null : null;
     app.passes = store.get('passes.' + id, []);
     app.pendingStart = store.get('pendingStart.' + id, null);
     app.results = null;
@@ -192,7 +194,8 @@
     app.teams = {};
     res.teams.forEach((t) => { app.teams[t.bib] = t; });
     app.rosterAt = Date.now();
-    store.set('comp.' + app.compId, { competition: res.competition, teams: res.teams, at: app.rosterAt });
+    setRace(res.race);
+    store.set('comp.' + app.compId, { competition: res.competition, teams: res.teams, at: app.rosterAt, race: app.race });
     return res;
   }
 
@@ -212,6 +215,40 @@
     const leg = p.deleted ? null : legOf(p);
     const runner = team && leg ? team.runners[leg - 1] : null;
     return { team, leg, runner };
+  }
+
+  // ------------------------------------------------------------------ レース終了（全走者の記録が揃ったらタイマー停止）
+
+  function setRace(race) {
+    if (!race) return;
+    const was = app.race && app.race.finished;
+    app.race = race;
+    if (race.finished && !was && app.view === 'run') {
+      toast('全走者の記録が揃いました。タイマーを停止します');
+      vibrate([100, 60, 100]);
+    }
+  }
+
+  /** この端末の記録だけで判定（オフライン時の代替）。DNS/DNF/DQ のチームは対象外 */
+  function localFinishMs() {
+    const start = app.comp && app.comp.start_ms;
+    const teams = Object.values(app.teams).filter((t) => !t.status);
+    if (!start || !teams.length) return null;
+    let last = 0;
+    for (const t of teams) {
+      const need = t.runners.length || (app.comp.team_size || 3);
+      const mine = app.passes.filter((p) => p.bib === t.bib && !p.deleted && p.time_ms >= start).sort((a, b) => a.time_ms - b.time_ms);
+      if (mine.length < need) return null;
+      last = Math.max(last, mine[need - 1].time_ms);
+    }
+    return last;
+  }
+
+  /** タイマーを止める時刻（全走者ゴール）。未完了なら null */
+  function raceFinishMs() {
+    if (app.race && app.race.finished) return app.race.finish_ms;
+    if (app.online === false) return localFinishMs();
+    return null;
   }
 
   // ------------------------------------------------------------------ 同期
@@ -271,9 +308,11 @@
         if (app.comp && res.competition) {
           const startChanged = app.comp.start_ms !== res.competition.start_ms;
           Object.assign(app.comp, res.competition);
+          setRace(res.race);
           const cache = store.get('comp.' + app.compId, null);
           if (cache) {
             cache.competition = app.comp;
+            cache.race = app.race;
             store.set('comp.' + app.compId, cache);
           }
           if (startChanged) render();
@@ -381,6 +420,7 @@
       '<div class="card">' +
       '<dl class="kv">' +
       '<dt>スタート</dt><dd id="comp-start">' + (started ? '<b>' + clock(c.start_ms) + '</b>（サーバ時刻）' : (app.pendingStart ? '送信待ち（オフラインで記録）' : '未記録')) + '</dd>' +
+      (started && app.race && app.race.finished ? '<dt>状況</dt><dd><b class="ok">全走者ゴール</b>（' + dur(app.race.elapsed_ms) + '）</dd>' : '') +
       '<dt>選手情報</dt><dd>' + (app.rosterAt ? teamCount + ' チーム（' + clock(app.rosterAt).slice(0, 5) + ' 取得）' : '未取得') + '</dd>' +
       '<dt>この端末</dt><dd>' + esc(device.name || '（未設定）') + ' <button class="link" data-act="rename">変更</button></dd>' +
       '<dt>時刻同期</dt><dd id="clock-info">' + clockInfo() + '</dd>' +
@@ -731,9 +771,17 @@
       const start = app.comp && app.comp.start_ms;
       const ps = app.pendingStart;
       const s = start || (ps ? (ps.server_ms || ps.client_ms) : null);
-      el.textContent = s ? dur(Math.max(0, now - s)) : '--:--.-';
+      const finish = start ? raceFinishMs() : null;
+      // 全走者の記録が揃ったら、最後のゴール時刻でタイマーを止める
+      el.textContent = finish != null ? dur(finish - start) : s ? dur(Math.max(0, now - s)) : '--:--.-';
+      const timer = $('.timer');
+      if (timer) timer.classList.toggle('stopped', finish != null);
       const sub = $('#timer-sub');
-      if (sub) sub.textContent = start ? 'スタート ' + clock(start) : ps ? 'スタート送信待ち' : 'スタート未記録';
+      if (sub) {
+        sub.textContent = finish != null ? '全走者ゴール・計測終了（スタート ' + clock(start) + '）'
+          : start ? 'スタート ' + clock(start) + (app.race && app.race.teams ? '　ゴール ' + app.race.teams_finished + '/' + app.race.teams + ' チーム' : '')
+          : ps ? 'スタート送信待ち' : 'スタート未記録';
+      }
     }
     // 1 桁目から時間が経ちすぎた入力は破棄（誤った時刻での記録を防ぐ）
     if (app.inputAt && Date.now() - app.inputAt.client > PENDING_EXPIRE_MS) {

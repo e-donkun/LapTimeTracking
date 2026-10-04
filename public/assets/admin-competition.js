@@ -19,6 +19,7 @@
     teams: [],
     devices: [],
     results: null,
+    race: null, // 全走者の記録が揃ったか（タイマー停止）
     passes: null,
     tab: 'results',
     timers: {},
@@ -31,6 +32,7 @@
     st.comp = res.competition;
     st.teams = res.teams;
     st.devices = res.devices;
+    st.race = res.race;
     renderHead();
   }
 
@@ -48,11 +50,22 @@
 
   function tickElapsed() {
     const el = $('#elapsed');
+    const label = $('#race-label');
+    const r = st.race;
     if (!st.comp || !st.comp.start_ms) {
       el.textContent = '--:--.-';
+      label.textContent = '';
+    } else if (r && r.finished) {
+      // 全走者の記録が揃ったら最後のゴール時刻でタイマーを止める
+      el.textContent = dur(r.elapsed_ms);
+      label.textContent = '全走者ゴール・計測終了';
     } else {
       el.textContent = dur(Math.max(0, L.serverNow() - st.comp.start_ms));
+      label.textContent = r && r.teams ? 'ゴール ' + r.teams_finished + ' / ' + r.teams + ' チーム' : '';
     }
+    const done = !!(st.comp && st.comp.start_ms && r && r.finished);
+    el.classList.toggle('stopped', done);
+    label.classList.toggle('done', done);
   }
 
   function teamByBib(b) {
@@ -80,8 +93,10 @@
     try {
       const res = await api('results', { id: ID });
       st.results = res.results;
-      if (st.comp && st.results.competition.start_ms !== st.comp.start_ms) {
-        st.comp.start_ms = st.results.competition.start_ms;
+      st.race = res.results.race;
+      const rc = st.results.competition;
+      if (st.comp && (rc.start_ms !== st.comp.start_ms || rc.status !== st.comp.status)) {
+        st.comp.start_ms = rc.start_ms;
         loadComp();
       }
       renderResults();
@@ -673,10 +688,23 @@
 
   // ------------------------------------------------------------------ ポーリング
 
+  let pollCount = 0;
   function poll() {
     if (document.hidden) return;
-    if (st.tab === 'results' && $('#res-auto').checked) loadResults();
-    else if (st.tab === 'passes') loadPasses();
+    pollCount++;
+    if (st.tab === 'results' && $('#res-auto').checked) {
+      loadResults();
+      return;
+    }
+    if (st.tab === 'passes') loadPasses();
+    // 集計タブ以外でもヘッダのタイマー（全走者ゴールで停止）を更新する
+    if (pollCount % 2 === 0) {
+      api('admin.competition', { id: ID }).then((res) => {
+        st.comp = res.competition;
+        st.race = res.race;
+        renderHead();
+      }).catch(() => {});
+    }
   }
 
   (async function init() {

@@ -11,6 +11,15 @@
     formWrap.hidden = false;
     form.elements.name.focus();
   });
+  document.getElementById('btn-sample').addEventListener('click', async () => {
+    if (!confirm('選手登録済みのサンプル大会を追加します。よろしいですか？')) return;
+    try {
+      const res = await api('admin.sample.create', {});
+      location.href = 'competition.php?id=' + res.id;
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
   document.getElementById('btn-cancel').addEventListener('click', () => { formWrap.hidden = true; });
 
   form.addEventListener('submit', async (e) => {

@@ -88,6 +88,9 @@ body[data-view="run"] #view { height: 100dvh; height: 100vh; height: 100dvh; ove
 .timer { text-align: center; padding: 8px 12px 4px; background: var(--navy); color: #fff; }
 .elapsed { font-family: var(--mono); font-size: clamp(40px, 13vw, 64px); font-weight: 800; line-height: 1.05; letter-spacing: -.02em; }
 .timer-sub { font-size: 12px; color: #b9c8e6; padding-bottom: 4px; }
+.timer.stopped { background: #1b5e20; }
+.timer.stopped .timer-sub { color: #c8e6c9; font-weight: 700; }
+.ok { color: var(--ok); }
 
 .entry { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .bib-input-wrap { flex: 0 0 auto; }

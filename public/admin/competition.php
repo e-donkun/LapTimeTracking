@@ -21,6 +21,7 @@ View::header($comp['name'], $user);
     <div class="comp-clock">
       <div class="small muted">スタート <span id="start-label">-</span></div>
       <div class="elapsed" id="elapsed">--:--.-</div>
+      <div class="small" id="race-label"></div>
     </div>
     <div class="comp-actions">
       <a class="btn btn-primary" href="export.php?id=<?= (int) $comp['id'] ?>">Excel 出力</a>
